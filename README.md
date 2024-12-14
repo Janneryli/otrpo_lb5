@@ -45,7 +45,7 @@ pip install -r requirements.txt
 ```
 3.Запуск приложения
 
-Убедитесь, что Neo4j запущен на bolt://localhost:7687.
+Убедитесь, что Neo4j запущен 
 Запустите сервер:
 ```bash
 python rest_api.py
