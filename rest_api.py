@@ -42,6 +42,7 @@ driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
 # Настройка авторизации
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
+
 # Простая проверка токена (заглушка)
 async def verify_token(token: str = Depends(oauth2_scheme)):
     if token != "test_token":  # Замените на вашу логику проверки токена
@@ -51,15 +52,18 @@ async def verify_token(token: str = Depends(oauth2_scheme)):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+
 # Модели данных
 class Node(BaseModel):
     id: int
     label: str
 
+
 class NodeWithRelations(BaseModel):
     id: int
     label: str
     relations: list
+
 
 # Функции базы данных
 async def get_all_nodes():
@@ -69,24 +73,32 @@ async def get_all_nodes():
         logging.info(f"Retrieved nodes: {nodes}")
         return nodes
 
+
 async def get_node_with_relations(node_id: int):
     with driver.session() as session:
-        result = session.run(
-            "MATCH (n)-[r]->(m) WHERE n.id=$node_id RETURN n, collect(r), collect(m)",
-            node_id=node_id
-        )
+        # Модифицированный запрос для обработки отсутствующих связей
+        query = """
+        MATCH (n)
+        WHERE n.id = $node_id
+        OPTIONAL MATCH (n)-[r]->(m)
+        RETURN n, collect(r) AS relations, collect(m) AS targets
+        """
+        result = session.run(query, node_id=node_id)
         record = result.single()
-        if not record:
+
+        if not record or not record["n"]:
             return None
+
         node = record["n"]
         relations = [
             {
                 "type": rel.type,
                 "target": {"id": target.get("id", None), "label": target.get("name", None)}
             }
-            for rel, target in zip(record["collect(r)"], record["collect(m)"])
+            for rel, target in zip(record["relations"], record["targets"])
         ]
         return {"id": node.get("id"), "label": node.get("name"), "relations": relations}
+
 
 async def create_node_and_relations(node: Node, token: str):
     with driver.session() as session:
@@ -97,11 +109,13 @@ async def create_node_and_relations(node: Node, token: str):
         logging.info(f"Created node: {node}")
         return {"message": "Node created successfully"}
 
+
 async def delete_node(node_id: int, token: str):
     with driver.session() as session:
         session.run("MATCH (n {id: $node_id}) DETACH DELETE n", node_id=node_id)
         logging.info(f"Deleted node with id: {node_id}")
         return {"message": "Node deleted successfully"}
+
 
 async def get_graph_segment():
     with driver.session() as session:
@@ -110,31 +124,39 @@ async def get_graph_segment():
         logging.info(f"Graph segment: {segment}")
         return segment
 
+
 # Эндпоинты API
 @app.get("/nodes", response_model=list[Node])
 async def read_all_nodes():
     return await get_all_nodes()
 
+
 @app.get("/node/{node_id}", response_model=NodeWithRelations)
 async def read_node(node_id: int):
+    logging.info(f"Fetching node with id: {node_id}")
     node = await get_node_with_relations(node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     return node
 
+
 @app.post("/nodes", response_model=dict)
 async def create_node(node: Node, token: str = Depends(verify_token)):
     return await create_node_and_relations(node, token)
+
 
 @app.delete("/nodes/{node_id}", response_model=dict)
 async def delete_node_endpoint(node_id: int, token: str = Depends(verify_token)):
     return await delete_node(node_id, token)
 
+
 @app.get("/graph-segment", response_model=list[dict])
 async def read_graph_segment():
     return await get_graph_segment()
 
+
 # Запуск приложения
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="127.0.0.1", port=8000)
